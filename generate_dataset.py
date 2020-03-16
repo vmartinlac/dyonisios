@@ -17,6 +17,8 @@ class SimpleFilter:
 
     def __call__(self, input_):
 
+        assert(input_.dtype == numpy.uint8)
+
         if input_.shape[1] > input_.shape[0]:
             a = numpy.rot90(input_)
         else:
@@ -36,9 +38,14 @@ class SimpleFilter:
         else:
             c = b
 
-        # TODO: gamma correction.
+        gamma = 2.0 ** ( 2.0*numpy.random.random() - 1.0 )
 
-        return c
+        lut = numpy.empty((1,256), numpy.uint8)
+        for i in range(256):
+            lut[0,i] = numpy.clip(pow(i / 255.0, gamma) * 255.0, 0, 255)
+        d = cv2.LUT(c, lut)
+
+        return d
 
 filters = [
     SimpleFilter(False, False),
@@ -115,7 +122,7 @@ class DatasetGenerator:
                 for f in filters:
                     filtered = f(frame)
                     output_filename = os.path.join(level1_dir, str(export_counter).zfill(6) + ".png")
-                    #cv2.imwrite(output_filename, filtered)
+                    cv2.imwrite(output_filename, filtered)
 
                     relpath = os.path.relpath(output_filename, start=self.dataset_directory)
 
@@ -124,7 +131,7 @@ class DatasetGenerator:
                     c.close()
 
                     cv2.imshow("", filtered)
-                    cv2.waitKey(5)
+                    cv2.waitKey(200)
 
                     export_counter += 1
             frame_counter += 1
