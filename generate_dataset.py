@@ -6,7 +6,29 @@ import sys
 import os.path
 
 couleurs = set(['trefle', 'carreau', 'coeur', 'pique'])
-valeurs = set(['as', 'roi', 'dame', 'valet', '2', '3', '4', '5', '6', '7', '8', '9'])
+valeurs = set(['as', 'roi', 'dame', 'valet', '2', '3', '4', '5', '6', '7', '8', '9', '10'])
+
+#to_skip = [
+#    ('5', 'carreau'),
+#    ('8', 'carreau'),
+#    ('as', 'carreau'),
+#    ('as', 'coeur'),
+#    ('as', 'pique'),
+#    ('as', 'trefle'),
+#    ('dame', 'carreau'),
+#    ('dame', 'coeur'),
+#    ('dame', 'pique'),
+#    ('dame', 'trefle'),
+#    ('roi', 'carreau'),
+#    ('roi', 'coeur'),
+#    ('roi', 'pique'),
+#    ('roi', 'trefle'),
+#    ('valet', 'carreau'),
+#    ('valet', 'coeur'),
+#    ('valet', 'pique'),
+#    ('valet', 'trefle') ]
+
+to_skip = []
 
 class SimpleFilter:
 
@@ -49,8 +71,6 @@ class SimpleFilter:
 
 filters = [
     SimpleFilter(False, False),
-    SimpleFilter(True, False),
-    SimpleFilter(False, True),
     SimpleFilter(True, True)]
 
 class DatasetGenerator:
@@ -59,13 +79,10 @@ class DatasetGenerator:
 
         fname = os.path.join(self.dataset_directory, 'db.sqlite')
 
-        if os.path.exists(fname):
-            os.remove(fname)
-
         self.db  = sqlite3.connect(fname)
 
-        self.db.execute("CREATE TABLE samples(id INTEGER PRIMARY KEY, class_id INTEGER, filename TEXT)")
-        self.db.execute("CREATE TABLE classes(id INTEGER PRIMARY KEY, suit TEXT, rank TEXT)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS samples(id INTEGER PRIMARY KEY, class_id INTEGER, filename TEXT)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS classes(id INTEGER PRIMARY KEY, suit TEXT, rank TEXT)")
 
     def run(self, root_directory):
 
@@ -76,14 +93,14 @@ class DatasetGenerator:
         self.init_db()
 
         for f in os.listdir(self.videos_directory):
-            m = re.match("^([a-zA-Z]+)_([a-zA-Z]+).mp4$", f)
+            m = re.match("^[0-9][0-9]_([a-zA-Z0-9]+)_([a-zA-Z0-9]+).mp4$", f)
             if m:
                 valeur = m.group(1)
                 enseigne = m.group(2)
-                if valeur not in valeurs or enseigne not in couleurs:
-                    print("Error:", valeur, enseigne)
-                    exit(1)
-                self.process_video(f, valeur, enseigne)
+                if valeur in valeurs and enseigne in couleurs and (valeur, enseigne) not in to_skip:
+                    self.process_video(f, valeur, enseigne)
+                else:
+                    print("Skipping:", valeur, enseigne)
 
         self.db.close()
 
@@ -91,23 +108,25 @@ class DatasetGenerator:
 
         print("Processing " + str(video_file) + "...")
 
-        # create DB record
-
-        c = self.db.cursor()
-        c.execute("INSERT INTO classes(suit, rank) VALUES(?,?)", (enseigne, valeur))
-        class_id = c.lastrowid
-        c.close()
-
         # create directory.
 
         level1_dir = os.path.join(self.dataset_directory, valeur + '_' + enseigne)
-        if os.path.isdir(level1_dir) == False:
+        if os.path.isdir(level1_dir):
+            print("Warning: already exists:", level1_dir)
+        else:
             os.mkdir(level1_dir)
 
         # open video.
 
         v = cv2.VideoCapture()
         v.open( os.path.join(self.videos_directory, video_file) )
+
+        # create DB record
+
+        c = self.db.cursor()
+        c.execute("INSERT INTO classes(suit, rank) VALUES(?,?)", (enseigne, valeur))
+        class_id = c.lastrowid
+        c.close()
 
         export_counter = 0
         frame_counter = 0
@@ -131,7 +150,7 @@ class DatasetGenerator:
                     c.close()
 
                     cv2.imshow("", filtered)
-                    cv2.waitKey(200)
+                    cv2.waitKey(20)
 
                     export_counter += 1
             frame_counter += 1
