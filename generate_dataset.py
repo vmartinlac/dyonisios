@@ -83,12 +83,13 @@ class DatasetGenerator:
 
         self.db.execute("CREATE TABLE IF NOT EXISTS samples(id INTEGER PRIMARY KEY, class_id INTEGER, filename TEXT)")
         self.db.execute("CREATE TABLE IF NOT EXISTS classes(id INTEGER PRIMARY KEY, suit TEXT, rank TEXT)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS datasets(id INTEGER PRIMARY KEY, name TEXT)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS memberships(id INTEGER PRIMARY KEY, sample_id INTEGER, dataset_id INTEGER)")
 
-    def run(self, root_directory):
+    def run(self, videos_directory):
 
-        self.root_directory = root_directory
-        self.videos_directory = os.path.join(root_directory, '00_videos')
-        self.dataset_directory = os.path.join(root_directory, '01_dataset')
+        self.videos_directory = videos_directory #os.path.join(root_directory, '00_videos')
+        self.dataset_directory = os.getcwd() #os.path.join(root_directory, '01_dataset')
 
         self.init_db()
 
