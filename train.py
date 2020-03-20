@@ -8,38 +8,7 @@ import os.path
 import torch
 import torchvision.transforms
 
-class Dataset(torch.utils.data.Dataset):
-
-    def __init__(self, engine, dataset_name):
-        self.engine = engine
-        self.dataset_name = dataset_name
-
-        cur = self.engine.db.cursor()
-        cur.execute("SELECT filename, class_id FROM samples WHERE id in (SELECT sample_id FROM memberships WHERE dataset_id IN (SELECT id FROM datasets WHERE name=?))", (self.dataset_name,))
-        self.table = cur.fetchall()
-        cur.close()
-        del cur
-
-        self.normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-
-    def __len__(self):
-        return len(self.table)
-
-    def __getitem__(self, i):
-
-        item = self.table[i]
-
-        image_filename = os.path.join(self.engine.root_directory, item[0])
-        im = cv2.imread(image_filename)
-        im = numpy.stack( (im[:,:,0], im[:,:,1], im[:,:,2]) )
-        im = torch.Tensor(im)
-        im = self.normalize(im)
-
-        index = self.engine.class_id_to_index[item[1]]
-
-        return (im, index)
-
-class Engine:
+class Database:
 
     def __init__(self, root_directory):
         self.root_directory = sys.argv[1]
@@ -90,23 +59,119 @@ class Engine:
     def __del__(self):
         self.db.close()
 
-def create_model():
+class Dataset(torch.utils.data.Dataset):
 
-    model = torch.hub.load('pytorch/vision:v0.5.0', 'resnet18', pretrained=True)
-    for name, param in model.named_parameters():
-        if "bn" not in name:
-            param.requires_grad = False
+    def __init__(self, database, dataset_name):
+        self.database = database
+        self.dataset_name = dataset_name
 
-    M = 800
-    N = len(engine.class_ids)
+        cur = self.database.db.cursor()
+        cur.execute("SELECT filename, class_id FROM samples WHERE id in (SELECT sample_id FROM memberships WHERE dataset_id IN (SELECT id FROM datasets WHERE name=?))", (self.dataset_name,))
+        self.table = cur.fetchall()
+        cur.close()
+        del cur
 
-    model.fc = torch.nn.Sequential(
-        torch.nn.Linear(model.fc.in_features, M),
-        torch.nn.ReLU(),
-        torch.nn.Dropout(),
-        torch.nn.Linear(M, N))
+        self.normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
-    return model
+    def __len__(self):
+        return len(self.table)
+
+    def __getitem__(self, i):
+
+        item = self.table[i]
+
+        image_filename = os.path.join(self.database.root_directory, item[0])
+        im = cv2.imread(image_filename)
+        im = numpy.stack( (im[:,:,0], im[:,:,1], im[:,:,2]) )
+        im = torch.Tensor(im)
+        im = self.normalize(im)
+
+        index = self.database.class_id_to_index[item[1]]
+
+        return (im, index)
+
+class Trainer:
+
+    def __init__(self, database):
+
+        self.database = database
+
+        self.train_batch_size = 64
+        self.test_batch_size = 64
+
+        self.device = 'cuda'
+
+        self.train_loader = torch.utils.data.DataLoader( Dataset(self.database, 'training'), self.train_batch_size, shuffle=True)
+        self.test_loader = torch.utils.data.DataLoader( Dataset(self.database, 'testing'), self.test_batch_size, shuffle=True)
+
+        self.create_model()
+
+        self.criterion = torch.nn.CrossEntropyLoss()
+
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.0001)
+
+
+    def run(self):
+
+        self.train_costs = list()
+        self.test_costs = list()
+
+        for epoch in range(20):
+
+            print("Beginning epoch " + str(epoch))
+
+            self.epoch_train()
+            self.save_checkpoint(epoch)
+            self.epoch_test()
+
+    def save_checkpoint(self, epoch):
+        filename = "model_epoch_{}.pth".format(epoch)
+        torch.save(self.model, filename)
+        print("Checkpoint saved to {}".format(filename))
+
+    def epoch_test(self):
+        #  TODO
+        pass
+
+    def epoch_train(self):
+
+        epoch_loss = 0.0
+        num_iterations = 0
+        for x, yref in self.train_loader:
+
+            x = x.to(self.device)
+            yref = yref.to(self.device)
+
+            self.optimizer.zero_grad()
+            y = self.model(x)
+            loss = self.criterion(y, yref)
+            loss.backward()
+            epoch_loss += loss.item()
+            self.optimizer.step()
+            print("Iteration({}): {}".format(num_iterations, loss.item()))
+            self.train_costs.append(loss.item())
+            num_iterations += 1
+
+        print("Epoch ended. Loss = " + str(epoch_loss) + ".")
+
+    def create_model(self):
+
+        model = torch.hub.load('pytorch/vision:v0.5.0', 'resnet18', pretrained=True)
+        for name, param in model.named_parameters():
+            if "bn" not in name:
+                param.requires_grad = False
+
+        M = 800
+        N = len(self.database.class_ids)
+
+        model.fc = torch.nn.Sequential(
+            torch.nn.Linear(model.fc.in_features, M),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(),
+            torch.nn.Linear(M, N))
+
+        #return model
+        self.model = model.to(self.device)
 
 if __name__ == '__main__':
 
@@ -118,32 +183,11 @@ if __name__ == '__main__':
         print("Bad command line!")
         exit(1)
 
-    engine = Engine(sys.argv[1])
+    database = Database(sys.argv[1])
 
-    #engine.create_dataset("training", 1000)
-    #engine.create_dataset("testing", 170)
+    #database.create_dataset("training", 1000)
+    #database.create_dataset("testing", 170)
 
-    train_batch_size = 64
-    #test_batch_size = 64
-
-    train_loader = torch.utils.data.DataLoader( Dataset(engine, 'training'), train_batch_size, shuffle=True)
-    #test_loader = torch.utils.data.DataLoader( Dataset(engine, 'testing'), test_batch_size, shuffle=True)
-
-    model = create_model()
-
-    model.to('cuda')
-
-    criterion = torch.nn.CrossEntropyLoss()
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-
-    for epoch in range(20):
-        print("Beginning epoch " + str(epoch))
-        for x, yref in train_loader:
-            optimizer.zero_grad()
-            y = model(x)
-            loss = criterion(y, yref)
-            loss.backward()
-            optimizer.step()
-            print(".")
+    trainer = Trainer(database)
+    trainer.run()
 
