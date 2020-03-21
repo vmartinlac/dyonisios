@@ -1,4 +1,7 @@
 import cv2
+import time
+import math
+import re
 import random
 import numpy
 import sqlite3
@@ -96,6 +99,8 @@ class Trainer:
 
         self.database = database
 
+        #self.learning_rate = 0.0001
+        self.learning_rate = 0.00003
         self.train_batch_size = 64
         self.test_batch_size = 64
 
@@ -108,35 +113,56 @@ class Trainer:
 
         self.criterion = torch.nn.CrossEntropyLoss()
 
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.0001)
-
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
     def run(self):
-
-        self.train_costs = list()
-        self.test_costs = list()
 
         for epoch in range(20):
 
             print("Beginning epoch " + str(epoch))
 
             self.epoch_train()
-            self.save_checkpoint(epoch)
+            self.save_checkpoint()
             self.epoch_test()
 
-    def save_checkpoint(self, epoch):
-        filename = "model_epoch_{}.pth".format(epoch)
+    def save_checkpoint(self):
+        number = math.floor(time.time())
+        filename = "model_epoch_{}.pth".format(number)
         torch.save(self.model, filename)
         print("Checkpoint saved to {}".format(filename))
 
     def epoch_test(self):
-        #  TODO
-        pass
+
+        num_iterations = 0
+        losses = list()
+        successes = list()
+
+        with torch.no_grad():
+            for x, yref in self.test_loader:
+
+                x = x.to(self.device)
+                yref = yref.to(self.device)
+
+                y = self.model(x)
+                loss = self.criterion(y, yref)
+
+                losses.append(loss.item())
+                successes += [ int(x) for x in ( y.argmax(1) == yref ) ]
+
+                print("TestIteration({}): loss={} proba={}".format(num_iterations, loss.item(), numpy.exp(-loss.item())))
+
+                num_iterations += 1
+
+        proba = numpy.exp( -(sum(losses) / len(losses)) )
+        print("Proba on testing set: {}".format(proba))
+        print("Percentage of correct classifications: {}".format(sum(successes)/float(len(successes))))
 
     def epoch_train(self):
 
-        epoch_loss = 0.0
         num_iterations = 0
+        losses = list()
+        successes = list()
+
         for x, yref in self.train_loader:
 
             x = x.to(self.device)
@@ -146,32 +172,53 @@ class Trainer:
             y = self.model(x)
             loss = self.criterion(y, yref)
             loss.backward()
-            epoch_loss += loss.item()
             self.optimizer.step()
-            print("Iteration({}): {}".format(num_iterations, loss.item()))
-            self.train_costs.append(loss.item())
+
+            losses.append(loss.item())
+            successes += [ int(x) for x in ( y.argmax(1) == yref ) ]
+
+            print("TrainIteration({}): loss={} proba={}".format(num_iterations, loss.item(), numpy.exp(-loss.item())))
+
             num_iterations += 1
 
-        print("Epoch ended. Loss = " + str(epoch_loss) + ".")
+        proba = numpy.exp( -(sum(losses) / len(losses)) )
+        print("Proba on training set: {}".format(proba))
+        print("Percentage of correct classifications: {}".format(sum(successes)/float(len(successes))))
 
     def create_model(self):
 
-        model = torch.hub.load('pytorch/vision:v0.5.0', 'resnet18', pretrained=True)
-        for name, param in model.named_parameters():
-            if "bn" not in name:
-                param.requires_grad = False
+        A = [ re.match("^model_epoch_([0-9]*).pth$", f) for f in os.listdir(".") ]
+        B = [ (int(m.group(1)), m.group(0)) for m in A if m ]
 
-        M = 800
-        N = len(self.database.class_ids)
+        if B:
+            B.sort(reverse=True)
+            filename = B[0][1]
+            print("Loading checkpoint {}".format(filename))
+            model = torch.load(filename)
+            model.eval()
+        else:
+            model = torch.hub.load('pytorch/vision:v0.5.0', 'resnet18', pretrained=True)
+            for name, param in model.named_parameters():
+                if "bn" not in name:
+                    param.requires_grad = False
 
-        model.fc = torch.nn.Sequential(
-            torch.nn.Linear(model.fc.in_features, M),
-            torch.nn.ReLU(),
-            torch.nn.Dropout(),
-            torch.nn.Linear(M, N))
+            M = 800
+            N = len(self.database.class_ids)
+
+            model.fc = torch.nn.Sequential(
+                torch.nn.Linear(model.fc.in_features, M),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(),
+                torch.nn.Linear(M, N))
 
         #return model
         self.model = model.to(self.device)
+
+        #########""
+        #m = torch.jit.script(model)
+        #m.save("model.pt")
+        #exit(0)
+        #########""
 
 if __name__ == '__main__':
 
