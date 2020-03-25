@@ -74,8 +74,6 @@ class Dataset(torch.utils.data.Dataset):
         cur.close()
         del cur
 
-        self.normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-
     def __len__(self):
         return len(self.table)
 
@@ -84,10 +82,30 @@ class Dataset(torch.utils.data.Dataset):
         item = self.table[i]
 
         image_filename = os.path.join(self.database.root_directory, item[0])
+
+        # load image.
         im = cv2.imread(image_filename)
-        im = numpy.stack( (im[:,:,0], im[:,:,1], im[:,:,2]) )
+
+        # convert to RGB.
+        im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+
+        # convert to floating point.
+        im = numpy.asarray(im, dtype=numpy.float32)
+
+        # normalize.
+        im /= 255.0
+
+        mean = [0.485, 0.456, 0.406]
+        sigma = [0.229, 0.224, 0.225]
+
+        im[:,:,0] = (im[:,:,0] - mean[0]) / sigma[0]
+        im[:,:,1] = (im[:,:,1] - mean[1]) / sigma[1]
+        im[:,:,2] = (im[:,:,2] - mean[2]) / sigma[2]
+
+        # make pytorch tensor.
+
         im = torch.Tensor(im)
-        im = self.normalize(im)
+        im = im.permute([2, 0, 1]);
 
         index = self.database.class_id_to_index[item[1]]
 
@@ -99,8 +117,8 @@ class Trainer:
 
         self.database = database
 
-        #self.learning_rate = 0.0001
-        self.learning_rate = 0.00003
+        self.learning_rate = 0.0001
+        #self.learning_rate = 0.00003
         self.train_batch_size = 64
         self.test_batch_size = 64
 
@@ -117,7 +135,7 @@ class Trainer:
 
     def run(self):
 
-        for epoch in range(20):
+        for epoch in range(10):
 
             print("Beginning epoch " + str(epoch))
 

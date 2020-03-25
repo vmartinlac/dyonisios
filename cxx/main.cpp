@@ -1,5 +1,6 @@
 #include <iostream>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 #include <torch/torch.h>
 #include <torch/script.h>
 
@@ -70,49 +71,50 @@ int main(int num_args, char** args)
     const std::string model_path = args[1];
     const std::string image_path = args[2];
 
+    //const std::string model_path = "/home/victor/developpement/dyonisos/model.zip";
+    //const std::string image_path = "/home/victor/datasets/dyonisos/dataset/3_coeur/001015.png";
+
     // load image.
 
-    cv::Mat3b image = cv::imread(image_path);
-    if(image.data == nullptr)
+    cv::Mat3b image0 = cv::imread(image_path);
+    if(image0.data == nullptr)
     {
         std::cout << "Coudl not load image!" << std::endl;
         exit(0);
     }
 
+    // convert to RGB.
+
+    cv::cvtColor(image0, image0, cv::COLOR_BGR2RGB);
+
+    // convert to floating point.
+
+    cv::Mat3f image;
+    image0.convertTo(image, CV_32FC3);
+
     // normalize image.
 
-    cv::Vec3d sum1(0.0, 0.0, 0.0);
-    cv::Vec3d sum2(0.0, 0.0, 0.0);
-    for( const cv::Vec3d& x : image )
     {
-        sum1[0] += x[0];
-        sum1[1] += x[1];
-        sum1[2] += x[2];
+        const cv::Vec3f mu(0.485f, 0.456f, 0.406f);
+        const cv::Vec3f sigma(0.229f, 0.224f, 0.225f);
 
-        sum2[0] += x[0]*x[0];
-        sum2[1] += x[1]*x[0];
-        sum2[2] += x[2]*x[0];
-    }
-
-    cv::Vec3d mean;
-    cv::Vec3d std_dev;
-    for(int k=0; k<3; k++)
-    {
-        mean[k] = sum1[k] / static_cast<double>(image.size().area());
-        std_dev[k] = sum2[k] / static_cast<double>(image.size().area()) - mean[k]*mean[k];
-    }
-    const cv::Vec3d new_mean(0.485, 0.456, 0.406);
-    const cv::Vec3d new_std_dev(0.229, 0.224, 0.225);
-
-    cv::Mat3f new_image(image.size());
-
-    for(int i=0; i<new_image.rows; i++)
-    {
-        for(int j=0; j<new_image.cols; j++)
+        for(int i=0; i<image.rows; i++)
         {
-            for(int k=0; k<3; k++)
+            float* ptr = reinterpret_cast<float*>( image.ptr(i) );
+
+            for(int j=0; j<image.cols; j++)
             {
-                new_image(i,j)[k] = static_cast<float>( new_mean[k] + new_std_dev[k] * ( image(i,j)[k] - mean[k]) / std_dev[k] );
+                ptr[0] = (ptr[0] / 255.0f - mu[0]) / sigma[0];
+                ptr[1] = (ptr[1] / 255.0f - mu[1]) / sigma[1];
+                ptr[2] = (ptr[2] / 255.0f - mu[2]) / sigma[2];
+
+                /*
+                ptr[0] = (ptr[0] - mu[0]) / sigma[0];
+                ptr[1] = (ptr[1] - mu[1]) / sigma[1];
+                ptr[2] = (ptr[2] - mu[2]) / sigma[2];
+                */
+
+                ptr += 3;
             }
         }
     }
@@ -123,7 +125,13 @@ int main(int num_args, char** args)
 
     torch::jit::script::Module model = torch::jit::load(model_path);
 
-    torch::Tensor input = torch::from_blob(new_image.data, {1, image.rows, image.cols, 3}, torch::kF32);
+    if(image.isContinuous() == false)
+    {
+        std::cout << "Internal error!" << std::endl;
+        exit(1);
+    }
+
+    torch::Tensor input = torch::from_blob(image.data, {1, image.rows, image.cols, 3}, torch::kF32);
 
     input = input.permute({0, 3, 1, 2});
 
@@ -154,7 +162,7 @@ int main(int num_args, char** args)
 
     std::sort(index.begin(), index.end(), [&values] (size_t a, size_t b) { return values[a] < values[b]; } );
 
-    for(size_t i=0; i<52; i++)
+    for(size_t i=0; i<3 /* 52 */; i++)
     {
         const size_t j = index[i];
         std::cout << "P(" << labels[j] << ") = " << values[j] << std::endl;
