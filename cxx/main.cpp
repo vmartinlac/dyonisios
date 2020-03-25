@@ -160,7 +160,7 @@ int main(int num_args, char** args)
         index[i] = i;
     }
 
-    std::sort(index.begin(), index.end(), [&values] (size_t a, size_t b) { return values[a] < values[b]; } );
+    std::sort(index.begin(), index.end(), [&values] (size_t a, size_t b) { return values[a] > values[b]; } );
 
     for(size_t i=0; i<3 /* 52 */; i++)
     {
